@@ -1,0 +1,54 @@
+name: CodeQL (kernel/bpf, v6.8)
+
+on:
+  push:
+    branches: [ scan/bpf-v6.8 ]   # scoped to this snapshot branch only
+  workflow_dispatch:              # lets you re-run manually
+  # no `schedule:` → no recurring full-tree scan
+
+permissions:
+  contents: read
+  security-events: write          # required to upload alerts
+  actions: read
+
+concurrency:
+  group: codeql-bpf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze kernel/bpf (C/C++)
+    runs-on: ubuntu-latest        # bump to a larger runner if the build is tight
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout (v6.8 state)
+        uses: actions/checkout@v4
+
+      - name: Install kernel build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libssl-dev libelf-dev
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          build-mode: manual        # we drive the build → this is what scopes C/C++
+          # default query suite (lighter). Go deeper later with:
+          # queries: security-extended
+
+      - name: Configure + build ONLY kernel/bpf
+        run: |
+          make defconfig
+          ./scripts/config --enable BPF --enable BPF_SYSCALL \
+                           --enable BPF_JIT --enable CGROUP_BPF
+          make olddefconfig
+          make -j"$(nproc)" prepare
+          make -j"$(nproc)" kernel/bpf/   # compiles only this subsystem
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c-cpp"
